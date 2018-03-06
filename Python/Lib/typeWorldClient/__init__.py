@@ -3,8 +3,6 @@
 import datetime
 import os, sys, json, platform, urllib, urllib2, re, traceback, json, time, base64, keyring, certifi
 
-print certifi.where()
-
 import typeWorld.api, typeWorld.api.base
 from typeWorld.api import *
 from typeWorld.api.base import *
@@ -252,6 +250,8 @@ class APIClient(object):
 	def addSubscription(self, url, username = None, password = None):
 
 		if url.startswith('typeworldjson://'):
+
+			print 'client.addSubscription()'
 
 			url = url.replace('typeworldjson://', '')
 
@@ -1172,7 +1172,7 @@ class APISubscription(object):
 
 	def delete(self, calledFromParent = False):
 
-
+		# Delete all fonts
 		for foundry in self.foundries():
 			for family in foundry.families():
 				for font in family.fonts():
@@ -1188,24 +1188,20 @@ class APISubscription(object):
 		self.parent.parent.preferences.set('resources', resources)
 
 
-		if self.parent.get('currentSubscription') == self.url:
-			self.parent.set('currentSubscription', '')
-
-		# Old
-		self.parent.parent.preferences.remove(self.url)
 		# New
 		self.parent.parent.preferences.remove('subscription(%s)' % self.url)
 
-		# Resources
-		resources = self.parent.parent.preferences.get('resources') or {}
-		for url in self.get('resources') or []:
-			if resources.has_key(url):
-				del resources[url]
-		self.parent.parent.preferences.set('resources', resources)
-
+		# Subscriptions
 		subscriptions = self.parent.get('subscriptions')
 		subscriptions.remove(self.url)
 		self.parent.set('subscriptions', subscriptions)
+		self.parent._subscriptions = {}
+
+		# currentSubscription
+		if self.parent.get('currentSubscription') == self.url:
+			if len(subscriptions) >= 1:
+				self.parent.set('currentSubscription', subscriptions[0])
+
 
 		if len(subscriptions) == 0 and calledFromParent == False:
 			self.parent.delete()
@@ -1217,7 +1213,8 @@ if __name__ == '__main__':
 
 	client = APIClient(preferences = AppKitNSUserDefaults('world.type.clientapp'))
 
-	print client.addSubscription('typeworldgithub://https://github.com/typeWorld/sampleGithubSubscription/tree/master/fontFamilies/YanoneKaffeesatz')
+#	print client.addSubscription('typeworldgithub://https://github.com/typeWorld/sampleGithubSubscription/tree/master/fontFamilies/YanoneKaffeesatz')
+	print client.addSubscription('typeworldjson://http://127.0.0.1:5000/?command=installableFonts&userID=5hXmdNNvywkHe2asYLXqJR2T&&anonymousAppID=H625npqamfsy2cnZgNSJWpZm')
 
 # 	for endpoint in client.publishers():
 # 		print endpoint
