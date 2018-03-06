@@ -1,7 +1,9 @@
 # -*- coding: utf-8 -*-
 
 import datetime
-import os, sys, json, platform, urllib, urllib2, re, traceback, json, time, base64
+import os, sys, json, platform, urllib, urllib2, re, traceback, json, time, base64, keyring, certifi
+
+print certifi.where()
 
 import typeWorld.api, typeWorld.api.base
 from typeWorld.api import *
@@ -97,14 +99,23 @@ class APIClient(object):
 		NSLog('Type.World Client: %s' % message)
 
 
-	def resourceByURL(self, url, binary = False, update = False):
+
+	def resourceByURL(self, url, binary = False, update = False, username = None, password = None):
 		u'''Caches and returns content of a HTTP resource. If binary is set to True, content will be stored and return as a bas64-encoded string'''
 
 		resources = self.preferences.get('resources') or {}
 
 		if not resources.has_key(url) or update:
 
-			response = urllib2.urlopen(url)
+			print 'resourceByURL', url
+
+			request = urllib2.Request(url)
+			if username and password:
+				base64string = base64.b64encode(b"%s:%s" % (username, password)).decode("ascii")
+				request.add_header("Authorization", "Basic %s" % base64string)   
+				print 'with username and password %s:%s' % (username, password)
+			response = urllib2.urlopen(request, cafile=certifi.where())
+
 
 			if response.getcode() != 200:
 				return False, 'Resource returned with HTTP code %s' % response.code
@@ -138,7 +149,8 @@ class APIClient(object):
 		api = typeWorld.api.APIRoot()
 
 		try:
-			response = urllib2.urlopen(url)
+			request = urllib2.Request(url)
+			response = urllib2.urlopen(request, cafile=certifi.where())
 
 			if response.getcode() != 200:
 				d['errors'].append('Resource returned with HTTP code %s' % response.code)
@@ -167,7 +179,7 @@ class APIClient(object):
 
 		return api, d
 
-	def readGitHubResponse(self, url):
+	def readGitHubResponse(self, url, username = None, password = None):
 
 		d = {}
 		d['errors'] = []
@@ -177,7 +189,22 @@ class APIClient(object):
 		json = ''
 
 		try:
-			response = urllib2.urlopen(url)
+
+			print 'readGitHubResponse(%s)' % url
+
+			request = urllib2.Request(url)
+			if username and password:
+				base64string = base64.b64encode(b"%s:%s" % (username, password)).decode("ascii")
+				request.add_header("Authorization", "Basic %s" % base64string)   
+			response = urllib2.urlopen(request, cafile=certifi.where())
+
+			if response.getcode() == 404:
+				d['errors'].append('Server returned with error 404 (Not found). This hints at wring username or password.')
+				return None, d
+
+			if response.getcode() == 401:
+				d['errors'].append('User authentication failed. Please review your username and password.')
+				return None, d
 
 			if response.getcode() != 200:
 				d['errors'].append('Resource returned with HTTP code %s' % response.code)
@@ -194,6 +221,7 @@ class APIClient(object):
 			exc_type, exc_value, exc_traceback = sys.exc_info()
 			for line in traceback.format_exception_only(exc_type, exc_value):
 				d['errors'].append(line)
+			self.log(traceback.format_exc())
 
 		return json, d
 
@@ -221,7 +249,7 @@ class APIClient(object):
 		return anonymousAppID
 
 
-	def addSubscription(self, url):
+	def addSubscription(self, url, username = None, password = None):
 
 		if url.startswith('typeworldjson://'):
 
@@ -253,6 +281,7 @@ class APIClient(object):
 
 		elif url.startswith('typeworldgithub://'):
 
+
 			url = url.replace('typeworldgithub://', '')
 			# remove trailing slash
 			while url.endswith('/'):
@@ -269,15 +298,25 @@ class APIClient(object):
 
 			commitsURL = 'https://api.github.com/repos/%s/%s/commits?path=%s' % (owner, repo, path)
 
+
+			publisher = self.publisher(canonicalURL)
+			publisher.set('type', 'GitHub')
+
+			if username and password:
+				publisher.set('username', username)
+				publisher.setPassword(username, password)
+
+			allowed, message = publisher.gitHubRateLimit()
+			if not allowed:
+				return False, message, None
+
 			# Read response
-			commits, responses = self.readGitHubResponse(commitsURL)
+			commits, responses = publisher.readGitHubResponse(commitsURL)
 
 			# Errors
 			if responses['errors']:
 				return False, '\n'.join(responses['errors']), None
 
-			publisher = self.publisher(canonicalURL)
-			publisher.set('type', 'GitHub')
 			success, message = publisher.addGitHubSubscription(url, commits)
 			publisher.save()
 
@@ -315,6 +354,29 @@ class APIPublisher(object):
 		self.exists = False
 		self._subscriptions = {}
 
+	def gitHubRateLimit(self):
+
+		limits, responses = self.readGitHubResponse('https://api.github.com/rate_limit')
+
+		if responses['errors']:
+			return False, '\n'.join(responses['errors'])
+
+		limits = json.loads(limits)
+
+		if limits['rate']['remaining'] == 0:
+			return False, 'Your GitHub API rate limit has been reached. The limit resets at %s.' % (datetime.datetime.fromtimestamp(limits['rate']['reset']).strftime('%Y-%m-%d %H:%M:%S'))
+
+		return True, None
+
+
+	def readGitHubResponse(self, url):
+
+		if self.get('username') and self.getPassword(self.get('username')):
+			return self.parent.readGitHubResponse(url, self.get('username'), self.getPassword(self.get('username')))
+		else:
+			return self.parent.readGitHubResponse(url)
+
+
 	def name(self, locale = ['en']):
 
 		if self.get('type') == 'JSON':
@@ -330,6 +392,12 @@ class APIPublisher(object):
 			else:
 				return 'Error', 'en'
 
+	def getPassword(self, username):
+		return keyring.get_password("Type.World GitHub Subscription %s (%s)" % (self.canonicalURL, username), username)
+
+	def setPassword(self, username, password):
+		keyring.set_password("Type.World GitHub Subscription %s (%s)" % (self.canonicalURL, username), username, password)
+
 	def resourceByURL(self, url, binary = False, update = False):
 		u'''Caches and returns content of a HTTP resource. If binary is set to True, content will be stored and return as a bas64-encoded string'''
 
@@ -338,7 +406,11 @@ class APIPublisher(object):
 		if not url in resourcesList:
 			resourcesList.append(url)
 			self.set('resources', resourcesList)
-		return self.parent.resourceByURL(url, binary)
+
+		if self.get('username') and self.getPassword(self.get('username')):
+			return self.parent.resourceByURL(url, binary = binary, update = update, username = self.get('username'), password = self.getPassword(self.get('username')))
+		else:
+			return self.parent.resourceByURL(url, binary = binary, update = update)
 
 	def amountInstalledFonts(self):
 		amount = 0
@@ -379,7 +451,7 @@ class APIPublisher(object):
 	def path(self):
 		from os.path import expanduser
 		home = expanduser("~")
-		return os.path.join(home, 'Library', 'Fonts', 'Type.World App', self.name()[0])
+		return os.path.join(home, 'Library', 'Fonts', 'Type.World App', '%s (%s)' % (self.name()[0], self.get('type')))
 
 	def addJSONSubscription(self, url, api):
 
@@ -437,10 +509,24 @@ class APIPublisher(object):
 		for subscription in self.subscriptions():
 			subscription.delete(calledFromParent = True)
 
+		# Path
+		try:
+			os.rmdir(self.path())
+		except:
+			pass
+
 		# Old
 		self.parent.preferences.remove(self.canonicalURL)
 		# New
 		self.parent.preferences.remove('publisher(%s)' % self.canonicalURL)
+
+		# Resources
+		resources = self.parent.preferences.get('resources') or {}
+		for url in self.get('resources') or []:
+			if resources.has_key(url):
+				del resources[url]
+		self.parent.preferences.set('resources', resources)
+
 
 		publishers = self.parent.preferences.get('publishers')
 		publishers.remove(self.canonicalURL)
@@ -477,6 +563,11 @@ class APIFont(object):
 			self.setName = typeWorld.api.MultiLanguageText()
 			if len(self.postScriptName.split('-')[0]) > len(self.parent.parent.parent.name()):
 				self.setName.en = self.postScriptName.split('-')[0][len(self.parent.name())+1:]
+
+
+	def delete(self):
+		self.parent.parent.parent.removeFont(self.uniqueID)
+
 
 	def getSortedVersions(self):
 		if self.twObject:
@@ -567,20 +658,34 @@ class APIFamily(object):
 					self.description.en = userInfo['bio']
 
 	def gitHubFonts(self):
-		url = self.parent.parent.url
-		owner = url.split('/')[3]
-		repo = url.split('/')[4]
-		path = '/'.join(url.split('/')[7:]) + '/fonts'
 
-		
-		# owner = self.parent.parent.parent.canonicalURL.split('/')[-1]
-		# repo = self.parent.parent.url.split('/')[-1]
-		# path = '/'.join(self.parent.parent.url.split('/')[-2:-1])
 
-		url = 'https://api.github.com/repos/%s/%s/contents/%s' % (owner, repo, path)
-		success, content, mimeType = self.parent.parent.parent.resourceByURL(url)
+		if not hasattr(self, '_githubfonts'):
 
-		return json.loads(content)
+			print 'gitHubFonts()'
+
+			url = self.parent.parent.url
+			owner = url.split('/')[3]
+			repo = url.split('/')[4]
+			path = '/'.join(url.split('/')[7:]) + '/fonts'
+
+			
+			# owner = self.parent.parent.parent.canonicalURL.split('/')[-1]
+			# repo = self.parent.parent.url.split('/')[-1]
+			# path = '/'.join(self.parent.parent.url.split('/')[-2:-1])
+
+			url = 'https://api.github.com/repos/%s/%s/contents/%s' % (owner, repo, path)
+
+			if self.parent.parent.parent.get('username') and self.parent.parent.parent.getPassword(self.parent.parent.parent.get('username')):
+				success, content, mimeType = self.parent.parent.parent.parent.resourceByURL(url, username = self.parent.parent.parent.get('username'), password = self.parent.parent.parent.getPassword(self.parent.parent.parent.get('username')))
+			else:
+				success, content, mimeType = self.parent.parent.parent.parent.resourceByURL(url)
+
+	#		success, content, mimeType = self.parent.parent.parent.resourceByURL(url)
+
+			self._githubfonts = json.loads(content)
+
+		return self._githubfonts
 
 	def fonts(self):
 
@@ -626,6 +731,8 @@ class APIFoundry(object):
 		self.parent = parent
 		self.twObject = twObject
 
+		self._families = []
+
 		# Init attributes
 		self.keywords = ['backgroundColor', 'description', 'email', 'facebook', 'instagram', 'logo', 'name', 'skype', 'supportEmail', 'telephone', 'twitter', 'website']
 		for keyword in self.keywords:
@@ -655,18 +762,18 @@ class APIFoundry(object):
 
 	def families(self):
 
-		families = []
+		if not self._families:
 
-		if self.parent.parent.get('type') == 'JSON':
-			for family in self.twObject.families:
-				newFamily = APIFamily(self, family)
-				families.append(newFamily)
+			if self.parent.parent.get('type') == 'JSON':
+				for family in self.twObject.families:
+					newFamily = APIFamily(self, family)
+					self._families.append(newFamily)
 
-		elif self.parent.parent.get('type') == 'GitHub':
-			newFamily = APIFamily(self)
-			families.append(newFamily)
+			elif self.parent.parent.get('type') == 'GitHub':
+				newFamily = APIFamily(self)
+				self._families.append(newFamily)
 
-		return families
+		return self._families
 
 
 class APISubscription(object):
@@ -679,6 +786,8 @@ class APISubscription(object):
 		self.url = url
 		self.exists = False
 
+		self._foundries = []
+
 		self.versions = []
 		if self.get('versions'):
 			for dictData in self.get('versions'):
@@ -687,15 +796,6 @@ class APISubscription(object):
 				api.loadJSON(dictData)
 				self.versions.append(api)
 
-	def gitHubRateLimit(self):
-
-		limits, responses = self.parent.parent.readGitHubResponse('https://api.github.com/rate_limit')
-		limits = json.loads(limits)
-
-		if limits['rate']['remaining'] == 0:
-			return False, limits['rate']['reset']
-
-		return True, None
 		
 
 	def name(self, locale = ['en']):
@@ -715,7 +815,10 @@ class APISubscription(object):
 			resourcesList.append(url)
 			self.set('resources', resourcesList)
 
-		return self.parent.parent.resourceByURL(url, binary)
+		if self.parent.get('username') and self.parent.getPassword(self.get('username')):
+			return self.parent.parent.resourceByURL(url, binary, self.parent.get('username'), self.parent.getPassword(self.get('username')))
+		else:
+			return self.parent.parent.resourceByURL(url, binary)
 
 
 
@@ -735,23 +838,39 @@ class APISubscription(object):
 					if font.uniqueID == ID:
 						return font
 
+	def subscription(self, url):
+		if not self._subscriptions.has_key(url):
+			e = APISubscription(self, url)
+			self._subscriptions[url] = e
+
+		if self.get('subscriptions') and url in self.get('subscriptions'):
+			self._subscriptions[url].exists = True
+
+		return self._subscriptions[url]
+
+	def subscriptions(self):
+		return [self.subscription(url) for url in self.get('subscriptions') or []]
+
+
+
 	def foundries(self):
-		foundries = []
 
-		if self.parent.get('type') == 'JSON':
-			for foundry in self.latestVersion().response.getCommand().foundries:
+		if not self._foundries:
 
-				newFoundry = APIFoundry(self, twObject = foundry)
+			if self.parent.get('type') == 'JSON':
+				for foundry in self.latestVersion().response.getCommand().foundries:
 
-				foundries.append(newFoundry)
+					newFoundry = APIFoundry(self, twObject = foundry)
 
-		elif self.parent.get('type') == 'GitHub':
+					self._foundries.append(newFoundry)
 
-			newFoundry = APIFoundry(self)
-			foundries.append(newFoundry)
+			elif self.parent.get('type') == 'GitHub':
+
+				newFoundry = APIFoundry(self)
+				self._foundries.append(newFoundry)
 
 
-		return foundries
+		return self._foundries
 
 
 	def amountInstalledFonts(self):
@@ -780,7 +899,6 @@ class APISubscription(object):
 
 	def removeFont(self, fontID, folder = None):
 
-		api = self.latestVersion()
 
 		# Get font
 		for foundry in self.foundries():
@@ -790,6 +908,8 @@ class APISubscription(object):
 
 						if font.requiresUserID:
 						
+							api = self.latestVersion()
+
 							# Build URL
 							url = self.url
 							url = self.parent.parent.addAttributeToURL(url, 'command', 'uninstallFont')
@@ -802,7 +922,8 @@ class APISubscription(object):
 							acceptableMimeTypes = UNINSTALLFONTCOMMAND['acceptableMimeTypes']
 
 							try:
-								response = urllib2.urlopen(url)
+								request = urllib2.Request(url)
+								response = urllib2.urlopen(request, cafile=certifi.where())
 
 								if response.getcode() != 200:
 									return False, 'Resource returned with HTTP code %s' % response.code
@@ -884,7 +1005,8 @@ class APISubscription(object):
 							acceptableMimeTypes = INSTALLFONTCOMMAND['acceptableMimeTypes']
 
 							try:
-								response = urllib2.urlopen(url)
+								request = urllib2.Request(url)
+								response = urllib2.urlopen(request, cafile=certifi.where())
 
 								if response.getcode() != 200:
 									return False, 'Resource returned with HTTP code %s' % response.code
@@ -936,7 +1058,7 @@ class APISubscription(object):
 
 		elif self.parent.get('type') == 'GitHub':
 
-			allowed, reset = self.gitHubRateLimit()
+			allowed, message = self.parent.gitHubRateLimit()
 			if allowed:
 
 				# Get font
@@ -956,7 +1078,7 @@ class APISubscription(object):
 
 										url = 'https://api.github.com/repos/%s/%s/contents/%s?ref=%s' % (owner, repo, urlpath, commit['sha'])
 										print url
-										response, responses = self.parent.parent.readGitHubResponse(url)
+										response, responses = self.parent.readGitHubResponse(url)
 										response = json.loads(response)
 
 
@@ -973,7 +1095,7 @@ class APISubscription(object):
 
 										return True, None
 			else:
-				return False, 'Your GitHub API rate limit has been reached. The limit is reset at %s.' % (datetime.datetime.fromtimestamp(reset).strftime('%Y-%m-%d %H:%M:%S'))
+				return False, message
 
 
 
@@ -984,6 +1106,9 @@ class APISubscription(object):
 			return self.versions[-1]
 
 	def update(self):
+
+		# reset
+		self._foundries = []
 
 		if self.parent.get('type') == 'JSON':
 			api, responses = self.parent.parent.readJSONResponse(self.url, INSTALLABLEFONTSCOMMAND['acceptableMimeTypes'])
@@ -1001,7 +1126,7 @@ class APISubscription(object):
 			print 'commitsURL', commitsURL
 
 			# Read response
-			commits, responses = self.parent.parent.readGitHubResponse(commitsURL)
+			commits, responses = self.parent.readGitHubResponse(commitsURL)
 			self.set('commits', commits)
 
 
@@ -1046,6 +1171,13 @@ class APISubscription(object):
 
 
 	def delete(self, calledFromParent = False):
+
+
+		for foundry in self.foundries():
+			for family in foundry.families():
+				for font in family.fonts():
+					font.delete()
+
 
 		# Resources
 		resources = self.parent.parent.preferences.get('resources') or {}
