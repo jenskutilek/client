@@ -197,7 +197,7 @@ class APIClient(object):
 			response = urllib2.urlopen(request, cafile=certifi.where())
 
 			if response.getcode() == 404:
-				d['errors'].append('Server returned with error 404 (Not found). This hints at wring username or password.')
+				d['errors'].append('Server returned with error 404 (Not found).')
 				return None, d
 
 			if response.getcode() == 401:
@@ -667,7 +667,9 @@ class APIFamily(object):
 			url = self.parent.parent.url
 			owner = url.split('/')[3]
 			repo = url.split('/')[4]
-			path = '/'.join(url.split('/')[7:]) + '/fonts'
+			path = '/'.join(url.split('/')[5:]) + '/fonts'
+
+			print url
 
 			
 			# owner = self.parent.parent.parent.canonicalURL.split('/')[-1]
