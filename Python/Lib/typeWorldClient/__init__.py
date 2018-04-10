@@ -574,6 +574,20 @@ class APIFont(object):
 				self.setName.en = self.postScriptName.split('-')[0][len(self.parent.name())+1:]
 
 
+	def isOutdated(self):
+
+		installedVersion = self.installedVersion()
+		return installedVersion and installedVersion != self.getSortedVersions()[-1].number
+
+
+	def installedVersion(self, folder = None):
+		for version in self.getSortedVersions():
+			if os.path.exists(self.path(version.number, folder)):
+				return version.number
+
+
+
+
 	def delete(self):
 		self.parent.parent.parent.removeFont(self.uniqueID)
 
@@ -890,7 +904,7 @@ class APISubscription(object):
 		for foundry in self.foundries():
 			for family in foundry.families():
 				for font in family.fonts():
-					if self.installedFontVersion(font.uniqueID):
+					if font.installedVersion():
 						amount += 1
 		return amount
 
@@ -900,7 +914,7 @@ class APISubscription(object):
 		for foundry in self.foundries():
 			for family in foundry.families():
 				for font in family.fonts():
-					installedFontVersion = self.installedFontVersion(font.uniqueID)
+					installedFontVersion = font.installedVersion()
 					if installedFontVersion and installedFontVersion != font.getSortedVersions()[-1].number:
 						amount += 1
 		return amount
@@ -912,11 +926,7 @@ class APISubscription(object):
 			for family in foundry.families():
 				for font in family.fonts():
 					if font.uniqueID == fontID:
-
-						for version in font.getSortedVersions():
-#							print 'installedFontVersion ', font.path(version.number, folder)
-							if os.path.exists(font.path(version.number, folder)):
-								return version.number
+						return font.installedVersion()
 
 	def removeFont(self, fontID, folder = None):
 
@@ -966,7 +976,7 @@ class APISubscription(object):
 								
 
 								# REMOVE
-								installedFontVersion = self.installedFontVersion(font.uniqueID)
+								installedFontVersion = font.installedVersion()
 
 								if installedFontVersion:
 									# Delete file
@@ -985,7 +995,7 @@ class APISubscription(object):
 
 						else:
 							# REMOVE
-							installedFontVersion = self.installedFontVersion(font.uniqueID)
+							installedFontVersion = font.installedVersion()
 
 							if installedFontVersion:
 								# Delete file
