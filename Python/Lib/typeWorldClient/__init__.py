@@ -421,6 +421,15 @@ class APIPublisher(object):
 
 		return amount
 
+	def amountOutdatedFonts(self):
+		amount = 0
+		# Get font
+
+		for subscription in self.subscriptions():
+			amount += subscription.amountOutdatedFonts()
+
+		return amount
+
 	def currentSubscription(self):
 		if self.get('currentSubscription'):
 			subscription = self.subscription(self.get('currentSubscription'))
@@ -885,9 +894,19 @@ class APISubscription(object):
 						amount += 1
 		return amount
 
-	def installedFontVersion(self, fontID = None, folder = None):
+	def amountOutdatedFonts(self):
+		amount = 0
+		# Get font
+		for foundry in self.foundries():
+			for family in foundry.families():
+				for font in family.fonts():
+					installedFontVersion = self.installedFontVersion(font.uniqueID)
+					if installedFontVersion and installedFontVersion != font.getSortedVersions()[-1].number:
+						amount += 1
+		return amount
 
-		api = self.latestVersion()
+
+	def installedFontVersion(self, fontID = None, folder = None):
 
 		for foundry in self.foundries():
 			for family in foundry.families():
