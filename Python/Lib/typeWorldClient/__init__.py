@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 
 import datetime
-import os, sys, json, platform, urllib, urllib2, re, traceback, json, time, base64, keyring, certifi
+import os, sys, json, platform, urllib.request, urllib.parse, urllib.error, urllib.request, urllib.error, urllib.parse, re, traceback, json, time, base64, keyring, certifi
 
 import typeWorld.api, typeWorld.api.base
 from typeWorld.api import *
@@ -55,7 +55,7 @@ class AppKitNSUserDefaults(Preferences):
 				o = dict(o)
 
 			elif 'unicode' in o.__class__.__name__:
-				o = unicode(o)
+				o = str(o)
 
 
 #			print type(o)
@@ -82,7 +82,7 @@ class AppKitNSUserDefaults(Preferences):
 
 
 class APIClient(object):
-	u"""\
+	"""\
 	Main Type.World client app object. Use it to load repositories and install/uninstall fonts.
 	"""
 
@@ -99,20 +99,20 @@ class APIClient(object):
 
 
 	def resourceByURL(self, url, binary = False, update = False, username = None, password = None):
-		u'''Caches and returns content of a HTTP resource. If binary is set to True, content will be stored and return as a bas64-encoded string'''
+		'''Caches and returns content of a HTTP resource. If binary is set to True, content will be stored and return as a bas64-encoded string'''
 
 		resources = self.preferences.get('resources') or {}
 
-		if not resources.has_key(url) or update:
+		if url not in resources or update:
 
-			print 'resourceByURL', url
+			print('resourceByURL', url)
 
-			request = urllib2.Request(url)
+			request = urllib.request.Request(url)
 			if username and password:
 				base64string = base64.b64encode(b"%s:%s" % (username, password)).decode("ascii")
 				request.add_header("Authorization", "Basic %s" % base64string)   
-				print 'with username and password %s:%s' % (username, password)
-			response = urllib2.urlopen(request, cafile=certifi.where())
+				print('with username and password %s:%s' % (username, password))
+			response = urllib.request.urlopen(request, cafile=certifi.where())
 
 
 			if response.getcode() != 200:
@@ -122,10 +122,10 @@ class APIClient(object):
 				content = response.read()
 				if binary:
 					content = base64.b64encode(content)
-				resources[url] = response.headers.type + ',' + content
+				resources[url] = response.headers['content-type'] + ',' + content
 				self.preferences.set('resources', resources)
 
-				return True, content, response.headers.type
+				return True, content, response.headers['content-type']
 
 		else:
 
@@ -147,14 +147,14 @@ class APIClient(object):
 		api = typeWorld.api.APIRoot()
 
 		try:
-			request = urllib2.Request(url)
-			response = urllib2.urlopen(request, cafile=certifi.where())
+			request = urllib.request.Request(url)
+			response = urllib.request.urlopen(request, cafile=certifi.where())
 
 			if response.getcode() != 200:
 				d['errors'].append('Resource returned with HTTP code %s' % response.code)
 
-			if not response.headers.type in acceptableMimeTypes:
-				d['errors'].append('Resource headers returned wrong MIME type: "%s". Expected is %s.' % (response.headers.type, acceptableMimeTypes))
+			if not response.headers['content-type'] in acceptableMimeTypes:
+				d['errors'].append('Resource headers returned wrong MIME type: "%s". Expected is %s.' % (response.headers['content-type'], acceptableMimeTypes))
 				self.log('Received this response with an unexpected MIME type for the URL %s:\n\n%s' % (url, response.read()))
 
 			if response.getcode() == 200:
@@ -188,13 +188,13 @@ class APIClient(object):
 
 		try:
 
-			print 'readGitHubResponse(%s)' % url
+			print('readGitHubResponse(%s)' % url)
 
-			request = urllib2.Request(url)
+			request = urllib.request.Request(url)
 			if username and password:
 				base64string = base64.b64encode(b"%s:%s" % (username, password)).decode("ascii")
 				request.add_header("Authorization", "Basic %s" % base64string)   
-			response = urllib2.urlopen(request, cafile=certifi.where())
+			response = urllib.request.urlopen(request, cafile=certifi.where())
 
 			if response.getcode() == 404:
 				d['errors'].append('Server returned with error 404 (Not found).')
@@ -207,8 +207,8 @@ class APIClient(object):
 			if response.getcode() != 200:
 				d['errors'].append('Resource returned with HTTP code %s' % response.code)
 
-			# if not response.headers.type in acceptableMimeTypes:
-			# 	d['errors'].append('Resource headers returned wrong MIME type: "%s". Expected is %s.' % (response.headers.type, acceptableMimeTypes))
+			# if not response.headers['content-type'] in acceptableMimeTypes:
+			# 	d['errors'].append('Resource headers returned wrong MIME type: "%s". Expected is %s.' % (response.headers['content-type'], acceptableMimeTypes))
 			# 	self.log('Received this response with an unexpected MIME type for the URL %s:\n\n%s' % (url, response.read()))
 
 			if response.getcode() == 200:
@@ -251,7 +251,7 @@ class APIClient(object):
 
 		if url.startswith('typeworldjson://'):
 
-			print 'client.addSubscription()'
+			print('client.addSubscription()')
 
 			url = url.replace('typeworldjson://', '')
 
@@ -327,7 +327,7 @@ class APIClient(object):
 
 
 	def publisher(self, canonicalURL):
-		if not self._publishers.has_key(canonicalURL):
+		if canonicalURL not in self._publishers:
 			e = APIPublisher(self, canonicalURL)
 			self._publishers[canonicalURL] = e
 
@@ -344,7 +344,7 @@ class APIClient(object):
 
 
 class APIPublisher(object):
-	u"""\
+	"""\
 	Represents an API endpoint, identified and grouped by the canonical URL attribute of the API responses. This API endpoint class can then hold several repositories.
 	"""
 
@@ -399,7 +399,7 @@ class APIPublisher(object):
 		keyring.set_password("Type.World GitHub Subscription %s (%s)" % (self.canonicalURL, username), username, password)
 
 	def resourceByURL(self, url, binary = False, update = False):
-		u'''Caches and returns content of a HTTP resource. If binary is set to True, content will be stored and return as a bas64-encoded string'''
+		'''Caches and returns content of a HTTP resource. If binary is set to True, content will be stored and return as a bas64-encoded string'''
 
 		# Save resource
 		resourcesList = self.get('resources') or []
@@ -440,7 +440,7 @@ class APIPublisher(object):
 
 	def get(self, key):
 		preferences = dict(self.parent.preferences.get(self.canonicalURL) or self.parent.preferences.get('publisher(%s)' % self.canonicalURL) or {})
-		if preferences.has_key(key):
+		if key in preferences:
 
 			o = preferences[key]
 
@@ -487,7 +487,7 @@ class APIPublisher(object):
 
 
 	def subscription(self, url):
-		if not self._subscriptions.has_key(url):
+		if url not in self._subscriptions:
 			e = APISubscription(self, url)
 			self._subscriptions[url] = e
 
@@ -532,7 +532,7 @@ class APIPublisher(object):
 		# Resources
 		resources = self.parent.preferences.get('resources') or {}
 		for url in self.get('resources') or []:
-			if resources.has_key(url):
+			if url in resources:
 				del resources[url]
 		self.parent.preferences.set('resources', resources)
 
@@ -685,14 +685,14 @@ class APIFamily(object):
 
 		if not hasattr(self, '_githubfonts'):
 
-			print 'gitHubFonts()'
+			print('gitHubFonts()')
 
 			url = self.parent.parent.url
 			owner = url.split('/')[3]
 			repo = url.split('/')[4]
 			path = '/'.join(url.split('/')[5:]) + '/fonts'
 
-			print url
+			print(url)
 
 			
 			# owner = self.parent.parent.parent.canonicalURL.split('/')[-1]
@@ -802,7 +802,7 @@ class APIFoundry(object):
 
 
 class APISubscription(object):
-	u"""\
+	"""\
 	Represents an API endpoint, identified and grouped by the canonical URL attribute of the API responses. This API endpoint class can then hold several repositories.
 	"""
 
@@ -832,7 +832,7 @@ class APISubscription(object):
 
 
 	def resourceByURL(self, url, binary = False, update = False):
-		u'''Caches and returns content of a HTTP resource. If binary is set to True, content will be stored and return as a bas64-encoded string'''
+		'''Caches and returns content of a HTTP resource. If binary is set to True, content will be stored and return as a bas64-encoded string'''
 
 		# Save resource
 		resourcesList = self.get('resources') or []
@@ -864,7 +864,7 @@ class APISubscription(object):
 						return font
 
 	def subscription(self, url):
-		if not self._subscriptions.has_key(url):
+		if url not in self._subscriptions:
 			e = APISubscription(self, url)
 			self._subscriptions[url] = e
 
@@ -944,23 +944,23 @@ class APISubscription(object):
 							# Build URL
 							url = self.url
 							url = self.parent.parent.addAttributeToURL(url, 'command', 'uninstallFont')
-							url = self.parent.parent.addAttributeToURL(url, 'fontID', urllib.quote_plus(fontID))
+							url = self.parent.parent.addAttributeToURL(url, 'fontID', urllib.parse.quote_plus(fontID))
 							url = self.parent.parent.addAttributeToURL(url, 'anonymousAppID', self.parent.parent.anonymousAppID())
 
-							print 'Uninstalling %s in %s' % (fontID, folder)
-							print url
+							print('Uninstalling %s in %s' % (fontID, folder))
+							print(url)
 
 							acceptableMimeTypes = UNINSTALLFONTCOMMAND['acceptableMimeTypes']
 
 							try:
-								request = urllib2.Request(url)
-								response = urllib2.urlopen(request, cafile=certifi.where())
+								request = urllib.request.Request(url)
+								response = urllib.request.urlopen(request, cafile=certifi.where())
 
 								if response.getcode() != 200:
 									return False, 'Resource returned with HTTP code %s' % response.code
 
-								if not response.headers.type in acceptableMimeTypes:
-									return False, 'Resource headers returned wrong MIME type: "%s". Expected is %s.' % (response.headers.type, acceptableMimeTypes)
+								if not response.headers['content-type'] in acceptableMimeTypes:
+									return False, 'Resource headers returned wrong MIME type: "%s". Expected is %s.' % (response.headers['content-type'], acceptableMimeTypes)
 
 
 								api = APIRoot()
@@ -1026,27 +1026,27 @@ class APISubscription(object):
 							# Build URL
 							url = self.url
 							url = self.parent.parent.addAttributeToURL(url, 'command', 'installFont')
-							url = self.parent.parent.addAttributeToURL(url, 'fontID', urllib.quote_plus(fontID))
+							url = self.parent.parent.addAttributeToURL(url, 'fontID', urllib.parse.quote_plus(fontID))
 							url = self.parent.parent.addAttributeToURL(url, 'anonymousAppID', self.parent.parent.anonymousAppID())
 							url = self.parent.parent.addAttributeToURL(url, 'fontVersion', str(version))
 
-							print 'Installing %s in %s' % (fontID, folder)
-							print url
+							print('Installing %s in %s' % (fontID, folder))
+							print(url)
 
 							acceptableMimeTypes = INSTALLFONTCOMMAND['acceptableMimeTypes']
 
 							try:
-								request = urllib2.Request(url)
-								response = urllib2.urlopen(request, cafile=certifi.where())
+								request = urllib.request.Request(url)
+								response = urllib.request.urlopen(request, cafile=certifi.where())
 
 								if response.getcode() != 200:
 									return False, 'Resource returned with HTTP code %s' % response.code
 
-								if not response.headers.type in acceptableMimeTypes:
-									return False, 'Resource headers returned wrong MIME type: "%s". Expected is %s.' % (response.headers.type, acceptableMimeTypes)
+								if not response.headers['content-type'] in acceptableMimeTypes:
+									return False, 'Resource headers returned wrong MIME type: "%s". Expected is %s.' % (response.headers['content-type'], acceptableMimeTypes)
 
 								# Expect an error message
-								if response.headers.type == 'application/json':
+								if response.headers['content-type'] == 'application/json':
 
 									api = APIRoot()
 									_json = response.read()
@@ -1080,7 +1080,7 @@ class APISubscription(object):
 
 								else:
 
-									return False, "Unsupported MIME type (%s)." % (response.headers.type)
+									return False, "Unsupported MIME type (%s)." % (response.headers['content-type'])
 
 							except:
 								exc_type, exc_value, exc_traceback = sys.exc_info()
@@ -1100,7 +1100,7 @@ class APISubscription(object):
 
 								for commit in json.loads(self.get('commits')):
 									if commit['commit']['message'].startswith('Version: %s' % version):
-										print 'Install version %s, commit %s' % (version, commit['sha'])
+										print('Install version %s, commit %s' % (version, commit['sha']))
 
 										owner = self.url.split('/')[3]
 										repo = self.url.split('/')[4]
@@ -1108,7 +1108,7 @@ class APISubscription(object):
 
 
 										url = 'https://api.github.com/repos/%s/%s/contents/%s?ref=%s' % (owner, repo, urlpath, commit['sha'])
-										print url
+										print(url)
 										response, responses = self.parent.readGitHubResponse(url)
 										response = json.loads(response)
 
@@ -1154,7 +1154,7 @@ class APISubscription(object):
 			path = '/'.join(self.url.split('/')[7:])
 
 			commitsURL = 'https://api.github.com/repos/%s/%s/commits?path=%s/fonts' % (owner, repo, path)
-			print 'commitsURL', commitsURL
+			print('commitsURL', commitsURL)
 
 			# Read response
 			commits, responses = self.parent.readGitHubResponse(commitsURL)
@@ -1166,7 +1166,7 @@ class APISubscription(object):
 
 	def get(self, key):
 		preferences = dict(self.parent.parent.preferences.get(self.url) or self.parent.parent.preferences.get('subscription(%s)' % self.url) or {})
-		if preferences.has_key(key):
+		if key in preferences:
 
 			o = preferences[key]
 
@@ -1213,8 +1213,8 @@ class APISubscription(object):
 		# Resources
 		resources = self.parent.parent.preferences.get('resources') or {}
 		for url in self.get('resources') or []:
-			if resources.has_key(url):
-				print 'Deleting resource', url
+			if url in resources:
+				print('Deleting resource', url)
 				resources.pop(url)
 		self.parent.parent.preferences.set('resources', resources)
 
@@ -1245,7 +1245,7 @@ if __name__ == '__main__':
 	client = APIClient(preferences = AppKitNSUserDefaults('world.type.clientapp'))
 
 #	print client.addSubscription('typeworldgithub://https://github.com/typeWorld/sampleGithubSubscription/tree/master/fontFamilies/YanoneKaffeesatz')
-	print client.addSubscription('typeworldjson://http://127.0.0.1:5000/?command=installableFonts&userID=5hXmdNNvywkHe2asYLXqJR2T&&anonymousAppID=H625npqamfsy2cnZgNSJWpZm')
+	print(client.addSubscription('typeworldjson://http://127.0.0.1:5000/?command=installableFonts&userID=5hXmdNNvywkHe2asYLXqJR2T&&anonymousAppID=H625npqamfsy2cnZgNSJWpZm'))
 
 # 	for endpoint in client.publishers():
 # 		print endpoint
