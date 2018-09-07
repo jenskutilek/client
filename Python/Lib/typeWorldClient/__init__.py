@@ -7,7 +7,13 @@ import typeWorld.api, typeWorld.api.base
 from typeWorld.api import *
 from typeWorld.api.base import *
 
-from AppKit import NSDictionary
+from ynlib.files import ReadFromFile, WriteToFile
+from ynlib.system import Execute
+
+
+import platform
+WIN = platform.system() == 'Windows'
+MAC = platform.system() == 'Darwin'
 
 
 class Preferences(object):
@@ -16,21 +22,28 @@ class Preferences(object):
 class JSON(Preferences):
 	def __init__(self, path):
 		self.path = path
+		self._dict = {}
+
+		if self.path and os.path.exists(self.path):
+			self._dict = json.loads(ReadFromFile(self.path))
 
 	def get(self, key):
-		pass
+		if key in self._dict:
+			return self._dict[key]
 
 	def set(self, key, value):
-		pass
+		self._dict[key] = value
+		self.save()
 
-	def remove(self, key, value):
-		pass
+	def remove(self, key):
+		if key in self._dict:
+			del self._dict[key]
 
 	def save(self):
-		pass
+		WriteToFile(self.path, json.dumps(self._dict))
 
 	def dictionary(self):
-		pass
+		return self._dict
 
 
 class AppKitNSUserDefaults(Preferences):
@@ -92,9 +105,9 @@ class APIClient(object):
 
 
 	def log(self, message):
-
-		from AppKit import NSLog
-		NSLog('Type.World Client: %s' % message)
+		if WIN:
+			from AppKit import NSLog
+			NSLog('Type.World Client: %s' % message)
 
 
 
@@ -122,7 +135,7 @@ class APIClient(object):
 				content = response.read()
 				if binary:
 					content = base64.b64encode(content)
-				resources[url] = response.headers['content-type'] + ',' + content
+				resources[url] = response.headers['content-type'] + ',' + str(content)
 				self.preferences.set('resources', resources)
 
 				return True, content, response.headers['content-type']
@@ -276,6 +289,7 @@ class APIClient(object):
 			publisher.set('type', 'JSON')
 			success, message = publisher.addJSONSubscription(url, api)
 			publisher.save()
+			publisher.stillAlive()
 
 			return success, message, self.publisher(api.canonicalURL)
 
@@ -353,6 +367,20 @@ class APIPublisher(object):
 		self.canonicalURL = canonicalURL
 		self.exists = False
 		self._subscriptions = {}
+
+	def stillAlive(self):
+
+		# Register endpoint
+		url = 'https://type.world/registerAPIEndpoint/?url=%s' % urllib.parse.quote(self.canonicalURL)
+		request = urllib.request.Request(url)
+		response = urllib.request.urlopen(request, cafile=certifi.where())
+		response = json.loads(response.read())
+
+		if response['success'] == True:
+			print('API endpoint alive success.')
+		else:
+			print('API endpoint alive error: %s' % response['message'])
+
 
 	def gitHubRateLimit(self):
 
@@ -634,11 +662,16 @@ class APIFont(object):
 
 	def path(self, version, folder = None):
 
-		# User fonts folder
-		if not folder:
-			folder = self.parent.parent.parent.parent.path()
-			
-		return os.path.join(folder, self.filename(version))
+		if WIN:
+			return os.path.join(os.environ['WINDIR'], 'Fonts', self.filename(version))
+
+		if MAC:
+
+			# User fonts folder
+			if not folder:
+				folder = self.parent.parent.parent.parent.path()
+				
+			return os.path.join(folder, self.filename(version))
 
 
 class APIFamily(object):
@@ -986,6 +1019,9 @@ class APISubscription(object):
 									if os.path.exists(path):
 										os.remove(path)
 
+								# Ping
+								self.parent.stillAlive()
+
 								return True, None
 
 
@@ -1064,19 +1100,58 @@ class APISubscription(object):
 									elif api.response.getCommand().type == 'success':
 									
 
-										# Write file
-										path = font.path(version, folder)
+										if MAC or WIN:
 
-										# Create folder if it doesn't exist
-										if not os.path.exists(os.path.dirname(path)):
-											os.makedirs(os.path.dirname(path))
+											# Write file
+											path = font.path(version, folder)
 
-										# Put future encoding switches here
-										f = open(path, 'wb')
-										f.write(base64.b64decode(api.response.getCommand().font))
-										f.close()
+											# Create folder if it doesn't exist
+											if not os.path.exists(os.path.dirname(path)):
+												os.makedirs(os.path.dirname(path))
 
-										return True, None
+											# Put future encoding switches here
+											f = open(path, 'wb')
+											f.write(base64.b64decode(api.response.getCommand().font))
+											f.close()
+
+											# Ping
+											self.parent.stillAlive()
+
+											if os.path.exists(path):
+												return True, None
+											else:
+												return False, 'Font file could not be written: %s' % path
+
+										else:
+
+											fontPath = font.path(version, folder)
+
+											import tempfile
+											tempPath = os.path.join(tempfile.gettempdir(), font.filename(version))
+
+											# Put future encoding switches here
+											f = open(tempPath, 'wb')
+											f.write(base64.b64decode(api.response.getCommand().font))
+											f.close()
+
+											argument_line = '"%s" "%s"' % (tempPath, fontPath)
+
+											print(Execute('runas /user:Administrator "copy %s %s"' % (tempPath, fontPath)))
+
+											# from ctypes import windll
+											# ret = windll.shell32.ShellExecuteW(None, u"runas", 'copy', argument_line, None, 1)
+
+											# print ('ret', ret)
+
+
+											# Ping
+											self.parent.stillAlive()
+
+
+											if os.path.exists(fontPath):
+												return True, None
+											else:
+												return False, 'Font file could not be written: %s' % tempPath
 
 								else:
 
