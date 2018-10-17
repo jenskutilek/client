@@ -134,8 +134,11 @@ class APIClient(object):
 			else:
 				content = response.read()
 				if binary:
-					content = base64.b64encode(content)
-				resources[url] = response.headers['content-type'] + ',' + str(content)
+					content = base64.b64encode(content).decode()
+				else:
+					content = content.decode()
+
+				resources[url] = response.headers['content-type'] + ',' + content
 				self.preferences.set('resources', resources)
 
 				return True, content, response.headers['content-type']
@@ -145,7 +148,6 @@ class APIClient(object):
 			response = resources[url]
 			mimeType = response.split(',')[0]
 			content = response[len(mimeType)+1:]
-
 
 			return True, content, mimeType
 
