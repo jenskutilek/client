@@ -579,7 +579,7 @@ class APIFont(object):
 		self.gitHubContent = gitHubContent
 
 		# Init attributes
-		self.keywords = ['beta', 'free', 'licenseAllowanceDescription', 'licenseKeyword', 'name', 'postScriptName', 'previewImage', 'purpose', 'requiresUserID', 'seatsAllowedForUser', 'seatsInstalledByUser', 'timeAddedForUser', 'timeFirstPublished', 'format', 'uniqueID', 'upgradeLicenseURL', 'variableFont', 'setName', 'versions']
+		self.keywords = self.twObject.nonListProxyBasedKeys()
 		for keyword in self.keywords:
 			setattr(self, keyword, None)
 
@@ -605,11 +605,11 @@ class APIFont(object):
 	def isOutdated(self):
 
 		installedVersion = self.installedVersion()
-		return installedVersion and installedVersion != self.getSortedVersions()[-1].number
+		return installedVersion and installedVersion != self.getVersions()[-1].number
 
 
 	def installedVersion(self, folder = None):
-		for version in self.getSortedVersions():
+		for version in self.getVersions():
 			if os.path.exists(self.path(version.number, folder)):
 				return version.number
 
@@ -620,9 +620,9 @@ class APIFont(object):
 		self.parent.parent.parent.removeFont(self.uniqueID)
 
 
-	def getSortedVersions(self):
+	def getVersions(self):
 		if self.twObject:
-			return self.twObject.getSortedVersions()
+			return self.twObject.getVersions()
 
 		elif self.gitHubContent:
 
@@ -680,7 +680,7 @@ class APIFamily(object):
 		self.twObject = twObject
 
 		# Init attributes
-		self.keywords = ['billboards', 'description', 'issueTrackerURL', 'name', 'sourceURL', 'timeFirstPublished', 'uniqueID', 'upgradeLicenseURL']
+		self.keywords = self.twObject.nonListProxyBasedKeys()
 		for keyword in self.keywords:
 			setattr(self, keyword, None)
 
@@ -948,7 +948,7 @@ class APISubscription(object):
 			for family in foundry.families():
 				for font in family.fonts():
 					installedFontVersion = font.installedVersion()
-					if installedFontVersion and installedFontVersion != font.getSortedVersions()[-1].number:
+					if installedFontVersion and installedFontVersion != font.getVersions()[-1].number:
 						amount += 1
 		return amount
 
