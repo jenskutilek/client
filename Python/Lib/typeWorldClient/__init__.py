@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 
 import datetime
-import os, sys, json, platform, urllib.request, urllib.parse, urllib.error, urllib.request, urllib.error, urllib.parse, re, traceback, json, time, base64, keyring, certifi
+import os, sys, json, platform, urllib.request, urllib.parse, urllib.error, urllib.request, urllib.error, urllib.parse, re, traceback, json, time, base64, certifi
+
 
 import typeWorld.api, typeWorld.api.base
 from typeWorld.api import *
@@ -16,6 +17,176 @@ WIN = platform.system() == 'Windows'
 MAC = platform.system() == 'Darwin'
 
 
+
+
+def readJSONResponse(url, acceptableMimeTypes, data = {}):
+	d = {}
+	d['errors'] = []
+	d['warnings'] = []
+	d['information'] = []
+
+	# Take URL apart here
+	customProtocol, transportProtocol, subscriptionID, secretKey, restDomain = splitJSONURL(url)
+	url = transportProtocol + restDomain
+
+	# Validate
+	api = typeWorld.api.APIRoot()
+
+	try:
+		request = urllib.request.Request(url)
+
+		data = urllib.parse.urlencode(data)
+		data = data.encode('ascii')
+		
+		print ('readJSONResponse():', url, data)
+
+		response = urllib.request.urlopen(request, data, cafile=certifi.where())
+
+
+		if response.getcode() != 200:
+			d['errors'].append('Resource returned with HTTP code %s' % response.code)
+
+		if not response.headers['content-type'] in acceptableMimeTypes:
+			d['errors'].append('Resource headers returned wrong MIME type: "%s". Expected is %s.' % (response.headers['content-type'], acceptableMimeTypes))
+
+		if response.getcode() == 200:
+
+			api.loadJSON(response.read().decode())
+
+			information, warnings, errors = api.validate()
+
+			if information:
+				d['information'].extend(information)
+			if warnings:
+				d['warnings'].extend(warnings)
+			if errors:
+				d['errors'].extend(errors)
+
+	except:
+		d['errors'].append(traceback.format_exc())
+
+	return api, d
+
+
+
+def addJSONSubscription(url):
+
+
+	responses = {
+		'information': [],
+		'warnings': [],
+		'errors': [],
+	}
+
+	data = {}
+
+
+	if url.count('@') > 1:
+		responses['errors'].append('URL contains more than one @ sign, so don’t know how to parse it.')
+		return responses, None
+
+	if not '://' in url:
+		responses['errors'].append('URL is malformed.')
+		return responses, None
+
+
+	if url.split('://')[1].count(':') > 1:
+		responses['errors'].append('URL contains more than one : sign, so don’t know how to parse it.')
+		return responses, None
+
+	customProtocol, transportProtocol, subscriptionID, secretKey, restDomain = splitJSONURL(url)
+
+	if not transportProtocol:
+		responses['errors'].append('No transport protocol defined (http:// or https://).')
+		return responses, None
+
+	# Both subscriptionID as well as secretKey defined
+	if subscriptionID and secretKey:
+		url = transportProtocol + subscriptionID + ':' + 'secretKey' + '@' + restDomain
+	elif subscriptionID and not secretKey:
+		url = transportProtocol + subscriptionID + '@' + restDomain
+	else:
+		url = transportProtocol + restDomain
+
+	# Read response
+	api, responses = readJSONResponse(url, typeWorld.api.base.INSTALLABLEFONTSCOMMAND['acceptableMimeTypes'], data = {'subscriptionID': subscriptionID, 'secretKey': secretKey})
+
+	# Errors
+	if responses['errors']:
+		return responses, None
+
+	# Check for installableFonts response support
+	if not 'installableFonts' in api.supportedCommands and not 'installFonts' in api.supportedCommands:
+		responses['errors'].append('API endpoint %s does not support the "installableFonts" and "installFonts" commands.' % api.canonicalURL)
+		return responses, None
+
+	# Read response again, this time with installableFonts command
+	api, responses = readJSONResponse(url, typeWorld.api.base.INSTALLABLEFONTSCOMMAND['acceptableMimeTypes'], data = {'subscriptionID': subscriptionID, 'secretKey': secretKey, 'command': 'installableFonts'})
+
+	# Errors
+	if responses['errors']:
+		return responses, None
+
+	if not api.response:
+		responses['errors'].append('API response has only root, no response attribute attached. Expected: installableFonts response.')
+		return responses, None
+
+	if api.response.getCommand().type == 'error':
+		responses['errors'].append(api.response.getCommand().errorMessage)
+		return responses, None
+
+	# Success
+	data['subscriptionID'] = subscriptionID
+	data['secretKey'] = secretKey
+	return responses, api, data
+
+
+
+def splitJSONURL(url):
+
+	customProtocol = 'typeworldjson://'
+	url = url.replace(customProtocol, '')
+
+	url = url.replace('http//', 'http://')
+	url = url.replace('https//', 'https://')
+	url = url.replace('HTTP//', 'http://')
+	url = url.replace('HTTPS//', 'https://')
+
+
+	transportProtocol = None
+	if url.lower().startswith('https://'):
+		transportProtocol = 'https://'
+	elif url.lower().startswith('http://'):
+		transportProtocol = 'http://'
+
+	urlRest = url[len(transportProtocol):]
+
+	subscriptionID = ''
+	secretKey = ''
+	if '@' in urlRest:
+
+		credentials, restDomain = urlRest.split('@')
+
+		# Both subscriptionID as well as secretKey defined
+		if ':' in credentials:
+			subscriptionID, secretKey = credentials.split(':')
+			keyURL = transportProtocol + subscriptionID + ':' + 'secretKey' + '@' + restDomain
+		else:
+			subscriptionID = credentials
+			secretKey = None
+			keyURL = transportProtocol + subscriptionID + '@' + restDomain
+
+		actualURL = transportProtocol + restDomain
+
+	# No credentials given
+	else:
+		keyURL = url
+		actualURL = url
+		restDomain = urlRest
+
+	return customProtocol, transportProtocol, subscriptionID, secretKey, restDomain
+
+
 class Preferences(object):
 	pass
 
@@ -23,6 +194,7 @@ class JSON(Preferences):
 	def __init__(self, path):
 		self.path = path
 		self._dict = {}
+
 
 		if self.path and os.path.exists(self.path):
 			self._dict = json.loads(ReadFromFile(self.path))
@@ -40,6 +212,9 @@ class JSON(Preferences):
 			del self._dict[key]
 
 	def save(self):
+
+		if not os.path.exists(os.path.dirname(self.path)):
+			os.makedirs(os.path.dirname(self.path))
 		WriteToFile(self.path, json.dumps(self._dict))
 
 	def dictionary(self):
@@ -102,12 +277,40 @@ class APIClient(object):
 	def __init__(self, preferences = None):
 		self.preferences = preferences
 		self._publishers = {}
+		self._subscriptionsUpdated = []
+
+
+	def keyring(self):
+
+		import keyring
+
+		if MAC:
+			from keyring.backends.OS_X import Keyring
+			keyring.core.set_keyring(keyring.core.load_keyring('keyring.backends.OS_X.Keyring'))
+		if WIN:
+			from keyring.backends.Windows import WinVaultKeyring
+			keyring.core.set_keyring(keyring.core.load_keyring('keyring.backends.Windows.WinVaultKeyring'))
+
+		return keyring
 
 
 	def log(self, message):
 		if WIN:
 			from AppKit import NSLog
 			NSLog('Type.World Client: %s' % message)
+
+	def prepareUpdate(self):
+
+		self._subscriptionsUpdated = []
+
+	def allSubscriptionsUpdated(self):
+
+		numSubscriptions = 0
+		for publisher in self.publishers():
+			numSubscriptions += len(publisher.subscriptions())
+
+		if len(self._subscriptionsUpdated) == numSubscriptions:
+			return True
 
 
 
@@ -152,45 +355,7 @@ class APIClient(object):
 			return True, content, mimeType
 
 
-	def readJSONResponse(self, url, acceptableMimeTypes):
-		d = {}
-		d['errors'] = []
-		d['warnings'] = []
-		d['information'] = []
 
-		# Validate
-		api = typeWorld.api.APIRoot()
-
-		try:
-			request = urllib.request.Request(url)
-			response = urllib.request.urlopen(request, cafile=certifi.where())
-
-			if response.getcode() != 200:
-				d['errors'].append('Resource returned with HTTP code %s' % response.code)
-
-			if not response.headers['content-type'] in acceptableMimeTypes:
-				d['errors'].append('Resource headers returned wrong MIME type: "%s". Expected is %s.' % (response.headers['content-type'], acceptableMimeTypes))
-				self.log('Received this response with an unexpected MIME type for the URL %s:\n\n%s' % (url, response.read()))
-
-			if response.getcode() == 200:
-
-				api.loadJSON(response.read())
-
-				information, warnings, errors = api.validate()
-
-				if information:
-					d['information'].extend(information)
-				if warnings:
-					d['warnings'].extend(warnings)
-				if errors:
-					d['errors'].extend(errors)
-
-		except:
-			exc_type, exc_value, exc_traceback = sys.exc_info()
-			for line in traceback.format_exception_only(exc_type, exc_value):
-				d['errors'].append(line)
-
-		return api, d
 
 	def readGitHubResponse(self, url, username = None, password = None):
 
@@ -262,84 +427,82 @@ class APIClient(object):
 		return anonymousAppID
 
 
+
 	def addSubscription(self, url, username = None, password = None):
 
-		if url.startswith('typeworldjson://'):
+		try:
 
-			print('client.addSubscription()')
+			if url.startswith('typeworldjson://'):
 
-			url = url.replace('typeworldjson://', '')
-
-			# Read response
-			api, responses = self.readJSONResponse(url, INSTALLABLEFONTSCOMMAND['acceptableMimeTypes'])
-
-			# Errors
-			if responses['errors']:
-				return False, '\n'.join(responses['errors']), None
-
-			# Check for installableFonts response support
-			if not 'installableFonts' in api.supportedCommands and not 'installFonts' in api.supportedCommands:
-				return False, 'API endpoint %s does not support the "installableFonts" and "installFonts" commands.' % api.canonicalURL, None
-
-			# Tweak url to include "installableFonts" command
-			url = self.addAttributeToURL(url, 'command', 'installableFonts')
-
-			# Read response again, this time with installableFonts command
-			api, responses = self.readJSONResponse(url, INSTALLABLEFONTSCOMMAND['acceptableMimeTypes'])
-
-			publisher = self.publisher(api.canonicalURL)
-			publisher.set('type', 'JSON')
-			success, message = publisher.addJSONSubscription(url, api)
-			publisher.save()
-			publisher.stillAlive()
-
-			return success, message, self.publisher(api.canonicalURL)
-
-		elif url.startswith('typeworldgithub://'):
+				print('client.addSubscription()')
 
 
-			url = url.replace('typeworldgithub://', '')
-			# remove trailing slash
-			while url.endswith('/'):
-				url = url[:-1]
-			
-			if not url.startswith('https://'):
-				return False, 'GitHub-URL needs to start with https://', None
+				responses, api, data = addJSONSubscription(url)
 
-			canonicalURL = '/'.join(url.split('/')[:4])
-			owner = url.split('/')[3]
-			repo = url.split('/')[4]
-			path = '/'.join(url.split('/')[7:])
+				if not responses['errors']:
+
+					publisher = self.publisher(api.canonicalURL)
+					publisher.set('type', 'JSON')
+					success, message = publisher.addJSONSubscription(url, api, subscriptionID = data['subscriptionID'], secretKey = data['secretKey'])
+					publisher.save()
+					publisher.stillAlive()
+					return success, message, self.publisher(api.canonicalURL)
+
+				else:
+
+					return False, responses['errors'][0], None
 
 
-			commitsURL = 'https://api.github.com/repos/%s/%s/commits?path=%s' % (owner, repo, path)
+			elif url.startswith('typeworldgithub://'):
 
 
-			publisher = self.publisher(canonicalURL)
-			publisher.set('type', 'GitHub')
+				url = url.replace('typeworldgithub://', '')
+				# remove trailing slash
+				while url.endswith('/'):
+					url = url[:-1]
+				
+				if not url.startswith('https://'):
+					return False, 'GitHub-URL needs to start with https://', None
 
-			if username and password:
-				publisher.set('username', username)
-				publisher.setPassword(username, password)
+				canonicalURL = '/'.join(url.split('/')[:4])
+				owner = url.split('/')[3]
+				repo = url.split('/')[4]
+				path = '/'.join(url.split('/')[7:])
 
-			allowed, message = publisher.gitHubRateLimit()
-			if not allowed:
-				return False, message, None
 
-			# Read response
-			commits, responses = publisher.readGitHubResponse(commitsURL)
+				commitsURL = 'https://api.github.com/repos/%s/%s/commits?path=%s' % (owner, repo, path)
 
-			# Errors
-			if responses['errors']:
-				return False, '\n'.join(responses['errors']), None
 
-			success, message = publisher.addGitHubSubscription(url, commits)
-			publisher.save()
+				publisher = self.publisher(canonicalURL)
+				publisher.set('type', 'GitHub')
 
-			return success, message, self.publisher(canonicalURL)
+				if username and password:
+					publisher.set('username', username)
+					publisher.setPassword(username, password)
 
-		else:
-			return False, 'Unknown protocol, known are: %s' % (typeWorld.api.base.PROTOCOLS), None
+				allowed, message = publisher.gitHubRateLimit()
+				if not allowed:
+					return False, message, None
+
+				# Read response
+				commits, responses = publisher.readGitHubResponse(commitsURL)
+
+				# Errors
+				if responses['errors']:
+					return False, '\n'.join(responses['errors']), None
+
+				success, message = publisher.addGitHubSubscription(url, commits)
+				publisher.save()
+
+				return success, message, self.publisher(canonicalURL)
+
+			else:
+				return False, 'Unknown protocol, known are: %s' % (typeWorld.api.base.PROTOCOLS), None
+
+		except:
+
+			exc_type, exc_value, exc_traceback = sys.exc_info()
+			return False, traceback.format_exc(), None
 
 
 	def publisher(self, canonicalURL):
@@ -369,6 +532,25 @@ class APIPublisher(object):
 		self.canonicalURL = canonicalURL
 		self.exists = False
 		self._subscriptions = {}
+
+		self._updatingSubscriptions = []
+
+	def stillUpdating(self):
+		return len(self._updatingSubscriptions) > 0
+
+
+	def updatingProblem(self):
+
+		problems = []
+
+		for subscription in self.subscriptions():
+			problem = subscription.updatingProblem()
+			if problem and not problem in problems:
+				problems.append(problem)
+
+		if problems:
+			return problems
+
 
 	def stillAlive(self):
 
@@ -423,9 +605,11 @@ class APIPublisher(object):
 				return 'Error', 'en'
 
 	def getPassword(self, username):
+		keyring = self.parent.keyring()
 		return keyring.get_password("Type.World GitHub Subscription %s (%s)" % (self.canonicalURL, username), username)
 
 	def setPassword(self, username, password):
+		keyring = self.parent.keyring()
 		keyring.set_password("Type.World GitHub Subscription %s (%s)" % (self.canonicalURL, username), username, password)
 
 	def resourceByURL(self, url, binary = False, update = False):
@@ -443,22 +627,30 @@ class APIPublisher(object):
 			return self.parent.resourceByURL(url, binary = binary, update = update)
 
 	def amountInstalledFonts(self):
-		amount = 0
-		# Get font
+		return len(self.installedFonts())
+
+	def installedFonts(self):
+		l = []
 
 		for subscription in self.subscriptions():
-			amount += subscription.amountInstalledFonts()
+			for font in subscription.installedFonts():
+				if not font in l:
+					l.append(font)
 
-		return amount
+		return l
 
 	def amountOutdatedFonts(self):
-		amount = 0
-		# Get font
+		return len(self.outdatedFonts())
+
+	def outdatedFonts(self):
+		l = []
 
 		for subscription in self.subscriptions():
-			amount += subscription.amountOutdatedFonts()
+			for font in subscription.outdatedFonts():
+				if not font in l:
+					l.append(font)
 
-		return amount
+		return l
 
 	def currentSubscription(self):
 		if self.get('currentSubscription'):
@@ -492,15 +684,19 @@ class APIPublisher(object):
 		home = expanduser("~")
 		return os.path.join(home, 'Library', 'Fonts', 'Type.World App', '%s (%s)' % (self.name()[0], self.get('type')))
 
-	def addJSONSubscription(self, url, api):
+	def addJSONSubscription(self, url, api, subscriptionID = None, secretKey = None):
 
 		self.parent._subscriptions = {}
 
 		subscription = self.subscription(url)
 
+
 		subscription.addJSONVersion(api)
 		self.set('currentSubscription', url)
 		subscription.save()
+
+		if secretKey:
+			subscription.setSecretKey(secretKey)
 
 		return True, None
 
@@ -846,6 +1042,10 @@ class APISubscription(object):
 		self.url = url
 		self.exists = False
 
+		self._updatingProblem = None
+
+		print('<API SUbscription %s>' % self.url)
+
 		self._foundries = []
 
 		self.versions = []
@@ -856,12 +1056,13 @@ class APISubscription(object):
 				api.loadJSON(dictData)
 				self.versions.append(api)
 
+
 		
 
 	def name(self, locale = ['en']):
 
 		if self.parent.get('type') == 'JSON':
-			return self.latestVersion().response.getCommand().name.getText(locale) or '#(Undefined)'
+			return self.latestVersion().response.getCommand().name.getText(locale) or '#(Unnamed)'
 		if self.parent.get('type') == 'GitHub':
 			return self.url.split('/')[-1]
 
@@ -934,26 +1135,33 @@ class APISubscription(object):
 
 
 	def amountInstalledFonts(self):
-		amount = 0
+		return len(self.installedFonts())
+
+	def installedFonts(self):
+		l = []
 		# Get font
 		for foundry in self.foundries():
 			for family in foundry.families():
 				for font in family.fonts():
 					if font.installedVersion():
-						amount += 1
-		return amount
+						if not font in l:
+							l.append(font.uniqueID)
+		return l
 
 	def amountOutdatedFonts(self):
-		amount = 0
+		return len(self.outdatedFonts())
+
+	def outdatedFonts(self):
+		l = []
 		# Get font
 		for foundry in self.foundries():
 			for family in foundry.families():
 				for font in family.fonts():
 					installedFontVersion = font.installedVersion()
 					if installedFontVersion and installedFontVersion != font.getVersions()[-1].number:
-						amount += 1
-		return amount
-
+						if not font in l:
+							l.append(font.uniqueID)
+		return l
 
 	def installedFontVersion(self, fontID = None, folder = None):
 
@@ -972,41 +1180,29 @@ class APISubscription(object):
 				for font in family.fonts():
 					if font.uniqueID == fontID:
 
-						if font.requiresUserID:
+						# TODO: remove this for final version
+						if (hasattr(font, 'requiresUserID') and font.requiresUserID) or (hasattr(font, 'protected') and font.protected):
 						
-							api = self.latestVersion()
-
-							# Build URL
-							url = self.url
-							url = self.parent.parent.addAttributeToURL(url, 'command', 'uninstallFont')
-							url = self.parent.parent.addAttributeToURL(url, 'fontID', urllib.parse.quote_plus(fontID))
-							url = self.parent.parent.addAttributeToURL(url, 'anonymousAppID', self.parent.parent.anonymousAppID())
-
-							print('Uninstalling %s in %s' % (fontID, folder))
-							print(url)
-
-							acceptableMimeTypes = UNINSTALLFONTCOMMAND['acceptableMimeTypes']
-
 							try:
-								request = urllib.request.Request(url)
-								response = urllib.request.urlopen(request, cafile=certifi.where())
+								customProtocol, transportProtocol, subscriptionID, secretKey, restDomain = splitJSONURL(self.url)
+								url = transportProtocol + restDomain
 
-								if response.getcode() != 200:
-									return False, 'Resource returned with HTTP code %s' % response.code
+								data = {
+									'command': 'uninstallFont',
+									'fontID': urllib.parse.quote_plus(fontID),
+									'anonymousAppID': self.parent.parent.anonymousAppID(),
+									'subscriptionID': self.subscriptionID(),
+									'secretKey': self.getSecretKey(),
+								}
 
-								if not response.headers['content-type'] in acceptableMimeTypes:
-									return False, 'Resource headers returned wrong MIME type: "%s". Expected is %s.' % (response.headers['content-type'], acceptableMimeTypes)
+								print('curl -d "%s" -X POST %s' % ('&'.join(['{0}={1}'.format(k, v) for k,v in data.items()]), url))
 
+								api, messages = readJSONResponse(url, UNINSTALLFONTCOMMAND['acceptableMimeTypes'], data = data)
 
-								api = APIRoot()
-								_json = response.read()
-								api.loadJSON(_json)
+								if messages['errors']:
+									return False, '\n\n'.join(messages['errors'])
 
-								# print _json
-
-								if api.response.getCommand().type == 'error':
-									return False, api.response.getCommand().errorMessage
-								elif api.response.getCommand().type == 'seatAllowanceReached':
+								if api.response.getCommand().type == 'seatAllowanceReached':
 									return False, 'seatAllowanceReached'
 								
 
@@ -1019,7 +1215,11 @@ class APISubscription(object):
 
 
 									if os.path.exists(path):
-										os.remove(path)
+
+										try:
+											os.remove(path)
+										except PermissionError:
+											return False, "Insufficient permission to delete font."
 
 								# Ping
 								self.parent.stillAlive()
@@ -1041,9 +1241,13 @@ class APISubscription(object):
 								path = font.path(installedFontVersion, folder)
 
 								if os.path.exists(path):
-									os.remove(path)
 
-							return True, None
+									try:
+										os.remove(path)
+									except PermissionError:
+										return False, "Insufficient permission to delete font."
+
+						return True, None
 							
 		return True, ''
 
@@ -1062,51 +1266,40 @@ class APISubscription(object):
 						if font.uniqueID == fontID:
 							
 							# Build URL
-							url = self.url
-							url = self.parent.parent.addAttributeToURL(url, 'command', 'installFont')
-							url = self.parent.parent.addAttributeToURL(url, 'fontID', urllib.parse.quote_plus(fontID))
-							url = self.parent.parent.addAttributeToURL(url, 'anonymousAppID', self.parent.parent.anonymousAppID())
-							url = self.parent.parent.addAttributeToURL(url, 'fontVersion', str(version))
-
-							print('Installing %s in %s' % (fontID, folder))
-							print(url)
-
-							acceptableMimeTypes = INSTALLFONTCOMMAND['acceptableMimeTypes']
-
 							try:
-								request = urllib.request.Request(url)
-								response = urllib.request.urlopen(request, cafile=certifi.where())
 
-								if response.getcode() != 200:
-									return False, 'Resource returned with HTTP code %s' % response.code
+								customProtocol, transportProtocol, subscriptionID, secretKey, restDomain = splitJSONURL(self.url)
+								url = transportProtocol + restDomain
 
-								if not response.headers['content-type'] in acceptableMimeTypes:
-									return False, 'Resource headers returned wrong MIME type: "%s". Expected is %s.' % (response.headers['content-type'], acceptableMimeTypes)
+								data = {
+									'command': 'installFont',
+									'fontID': urllib.parse.quote_plus(fontID),
+									'fontVersion': str(version),
+									'anonymousAppID': self.parent.parent.anonymousAppID(),
+									'subscriptionID': self.subscriptionID(),
+									'secretKey': self.getSecretKey(),
+								}
 
-								# Expect an error message
-								if response.headers['content-type'] == 'application/json':
+								print('curl -d "%s" -X POST %s' % ('&'.join(['{0}={1}'.format(k, v) for k,v in data.items()]), url))
 
-									api = APIRoot()
-									_json = response.read()
-									api.loadJSON(_json)
+								api, messages = readJSONResponse(url, INSTALLFONTCOMMAND['acceptableMimeTypes'], data = data)
 
-									# Validation
-									information, warnings, errors = api.validate()
-									if errors:
-										return False, '\n\n'.join(errors)
+								if messages['errors']:
+									return False, '\n\n'.join(messages['errors'])
 
-									if api.response.getCommand().type == 'error':
-										return False, api.response.getCommand().errorMessage
-									elif api.response.getCommand().type == 'seatAllowanceReached':
-										return False, 'seatAllowanceReached'
-									elif api.response.getCommand().type == 'success':
-									
+								if api.response.getCommand().type == 'error':
+									return False, api.response.getCommand().errorMessage
+								elif api.response.getCommand().type == 'seatAllowanceReached':
+									return False, 'seatAllowanceReached'
+								elif api.response.getCommand().type == 'success':
+								
 
-										if MAC or WIN:
+									if MAC or WIN:
 
-											# Write file
-											path = font.path(version, folder)
+										# Write file
+										path = font.path(version, folder)
 
+										try:
 											# Create folder if it doesn't exist
 											if not os.path.exists(os.path.dirname(path)):
 												os.makedirs(os.path.dirname(path))
@@ -1115,49 +1308,47 @@ class APISubscription(object):
 											f = open(path, 'wb')
 											f.write(base64.b64decode(api.response.getCommand().font))
 											f.close()
+										except PermissionError:
+											return False, "Insufficient permission to install font."
 
-											# Ping
-											self.parent.stillAlive()
+										# Ping
+										self.parent.stillAlive()
 
-											if os.path.exists(path):
-												return True, None
-											else:
-												return False, 'Font file could not be written: %s' % path
-
+										if os.path.exists(path):
+											return True, None
 										else:
+											return False, 'Font file could not be written: %s' % path
 
-											fontPath = font.path(version, folder)
+									else:
 
-											import tempfile
-											tempPath = os.path.join(tempfile.gettempdir(), font.filename(version))
+										fontPath = font.path(version, folder)
 
-											# Put future encoding switches here
-											f = open(tempPath, 'wb')
-											f.write(base64.b64decode(api.response.getCommand().font))
-											f.close()
+										import tempfile
+										tempPath = os.path.join(tempfile.gettempdir(), font.filename(version))
 
-											argument_line = '"%s" "%s"' % (tempPath, fontPath)
+										# Put future encoding switches here
+										f = open(tempPath, 'wb')
+										f.write(base64.b64decode(api.response.getCommand().font))
+										f.close()
 
-											print(Execute('runas /user:Administrator "copy %s %s"' % (tempPath, fontPath)))
+										argument_line = '"%s" "%s"' % (tempPath, fontPath)
 
-											# from ctypes import windll
-											# ret = windll.shell32.ShellExecuteW(None, u"runas", 'copy', argument_line, None, 1)
+										print(Execute('runas /user:Administrator "copy %s %s"' % (tempPath, fontPath)))
 
-											# print ('ret', ret)
+										# from ctypes import windll
+										# ret = windll.shell32.ShellExecuteW(None, u"runas", 'copy', argument_line, None, 1)
 
-
-											# Ping
-											self.parent.stillAlive()
+										# print ('ret', ret)
 
 
-											if os.path.exists(fontPath):
-												return True, None
-											else:
-												return False, 'Font file could not be written: %s' % tempPath
+										# Ping
+										self.parent.stillAlive()
 
-								else:
 
-									return False, "Unsupported MIME type (%s)." % (response.headers['content-type'])
+										if os.path.exists(fontPath):
+											return True, None
+										else:
+											return False, 'Font file could not be written: %s' % tempPath
 
 							except:
 								exc_type, exc_value, exc_traceback = sys.exc_info()
@@ -1213,16 +1404,50 @@ class APISubscription(object):
 		if self.versions:
 			return self.versions[-1]
 
+	def subscriptionID(self):
+		customProtocol, transportProtocol, subscriptionID, secretKey, restDomain = splitJSONURL(self.url)
+		return subscriptionID
+
+	def getSecretKey(self):
+		subscriptionID = self.subscriptionID()
+		keyring = self.parent.parent.keyring()
+		return keyring.get_password("Type.World JSON Subscription %s (%s)" % (self.parent.canonicalURL, subscriptionID), subscriptionID)
+
+	def setSecretKey(self, secretKey):
+		subscriptionID = self.subscriptionID()
+		keyring = self.parent.parent.keyring()
+		keyring.set_password("Type.World JSON Subscription %s (%s)" % (self.parent.canonicalURL, subscriptionID), subscriptionID, secretKey)
+
+
+
 	def update(self):
+
+		self.parent._updatingSubscriptions.append(self.url)
 
 		# reset
 		self._foundries = []
 
 		if self.parent.get('type') == 'JSON':
-			api, responses = self.parent.parent.readJSONResponse(self.url, INSTALLABLEFONTSCOMMAND['acceptableMimeTypes'])
+
+			data = {'subscriptionID': self.subscriptionID(), 'command': 'installableFonts'}
+			secretKey = self.getSecretKey()
+			if secretKey:
+				data['secretKey'] = secretKey
+
+			api, responses = readJSONResponse(self.url, INSTALLABLEFONTSCOMMAND['acceptableMimeTypes'], data = data)
 			if responses['errors']:
-				return False, '\n'.join(responses['errors'])
+				
+				self.parent._updatingSubscriptions.remove(self.url)
+				self._updatingProblem = '\n'.join(responses['errors'])
+				return False, self._updatingProblem
+
 			self.addJSONVersion(api)
+
+			if api.response.getCommand().type == 'error':
+				self._updatingProblem = api.response.getCommand().errorMessage
+				return False, self._updatingProblem
+
+
 
 		elif self.parent.get('type') == 'GitHub':
 
@@ -1238,8 +1463,13 @@ class APISubscription(object):
 			self.set('commits', commits)
 
 
+		self.parent._updatingSubscriptions.remove(self.url)
+		self._updatingProblem = None
+		self.parent.parent._subscriptionsUpdated.append(self.url)
 		return True, None
 
+	def updatingProblem(self):
+		return self._updatingProblem
 
 	def get(self, key):
 		preferences = dict(self.parent.parent.preferences.get(self.url) or self.parent.parent.preferences.get('subscription(%s)' % self.url) or {})
