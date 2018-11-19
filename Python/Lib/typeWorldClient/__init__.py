@@ -91,7 +91,7 @@ def addJSONSubscription(url):
 
 
 	if url.split('://')[1].count(':') > 2:
-		responses['errors'].append('URL contains more than one : sign, so don’t know how to parse it.')
+		responses['errors'].append('URL contains more than two : signs, so don’t know how to parse it.')
 		return responses, None
 
 	customProtocol, transportProtocol, subscriptionID, secretKey, restDomain = splitJSONURL(url)
