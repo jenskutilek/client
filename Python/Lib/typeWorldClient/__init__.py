@@ -557,7 +557,11 @@ class APIPublisher(object):
 		# Register endpoint
 		url = 'https://type.world/registerAPIEndpoint/?url=%s' % urllib.parse.quote(self.canonicalURL)
 		request = urllib.request.Request(url)
-		response = urllib.request.urlopen(request, cafile=certifi.where())
+		try:
+			response = urllib.request.urlopen(request, cafile=certifi.where())
+		except urllib.error.HTTPError as e:
+			print('API endpoint alive HTTP error: %s' % e)
+			return
 		response = json.loads(response.read())
 
 		if response['success'] == True:
