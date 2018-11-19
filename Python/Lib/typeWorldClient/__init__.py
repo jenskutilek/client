@@ -90,7 +90,7 @@ def addJSONSubscription(url):
 		return responses, None
 
 
-	if url.split('://')[1].count(':') > 1:
+	if url.split('://')[1].count(':') > 2:
 		responses['errors'].append('URL contains more than one : sign, so don’t know how to parse it.')
 		return responses, None
 
